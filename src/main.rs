@@ -1,34 +1,38 @@
 extern crate env_logger;
 #[macro_use]
 extern crate log as irrelevant_log;
-#[macro_use] extern crate juniper;
+#[macro_use]
+extern crate juniper;
 extern crate juniper_warp;
-extern crate warp;
 extern crate rocksdb;
-#[macro_use] extern crate serde_derive;
+extern crate warp;
+#[macro_use]
+extern crate serde_derive;
 extern crate bincode;
+extern crate chrono;
+use std::sync::Arc;
 
-use juniper::{FieldResult, Variables};
+use juniper::FieldResult;
 use warp::{http::Response, log, Filter};
 
 mod database;
 mod series;
-use database::{Database};
-use series::{Series, NewSeries};
-
-
-// #[derive(GraphQLEnum)]
-// enum Episode {
-//     NewHope,
-//     Empire,
-//     Jedi,
-// }
+use database::Database;
+use series::{NewPoint, NewSeries, Point, QueryOptions, Series};
 
 struct Context {
-    db: Database
+    db: Arc<Database>,
 }
 
 impl juniper::Context for Context {}
+
+// graphql_object!(Series: Context |&self| {
+
+//     field query(&executor, series_name: String) -> FieldResult<Vec<Point>> {
+//         let db = &executor.context().db;
+//         Ok(db.query(series_name)?)
+//     }
+// });
 
 struct Query;
 
@@ -38,19 +42,19 @@ graphql_object!(Query: Context |&self| {
         "0.1"
     }
 
-    // Arguments to resolvers can either be simple types or input objects.
-    // The executor is a special (optional) argument that allows accessing the context.
+    field list_series(&executor) -> FieldResult<Vec<Series>> {
+        let db = &executor.context().db;
+        Ok(db.list_series()?)
+    }
+
     field series(&executor, name: String) -> FieldResult<Option<Series>> {
-        // Get the context from the executor.
-        let context = executor.context();
-        // // Get a db connection.
-        // let connection = context.pool.get_connection()?;
-        // Execute a db query.
-        // Note the use of `?` to propagate errors.
-        // let human = connection.find_human(&id)?;
-        // Return the result.
-        let series = context.db.get_series(name)?;
-        Ok(series)
+        let db = &executor.context().db;
+        Ok(db.get_series(name)?)
+    }
+
+    field query(&executor, series_name: String, options: Option<QueryOptions>) -> FieldResult<Vec<Point>> {
+        let db = &executor.context().db;
+        Ok(db.query(series_name, options)?)
     }
 });
 
@@ -58,16 +62,20 @@ struct Mutation;
 
 graphql_object!(Mutation: Context |&self| {
 
-    field createSeries(&executor, new_series: NewSeries) -> FieldResult<Series> {
-        // let db = executor.context().pool.get_connection()?;
-        // let human: Human = db.insert_human(&new_human)?;
-        // Ok(human)
-        // let context = executor.context();
+    field create_series(&executor, new_series: NewSeries) -> FieldResult<Series> {
         let db = &executor.context().db;
         Ok(db.create_series(new_series)?)
-        // Ok(Series {
-        //     name: new_series.name
-        // })
+    }
+
+    field delete_series(&executor, series_name: String) -> FieldResult<Option<Series>> {
+        let db = &executor.context().db;
+        db.delete_series(series_name)?;
+        Ok(None)
+    }
+
+    field create_point(&executor, series_name: String, new_point: NewPoint) -> FieldResult<Point> {
+        let db = &executor.context().db;
+        Ok(db.create_point(series_name, new_point)?)
     }
 });
 
@@ -78,6 +86,7 @@ fn schema() -> Schema {
 }
 
 fn main() {
+    let db = Arc::new(database::Database::open("./test.db".to_string()));
     ::std::env::set_var("RUST_LOG", "warp_server");
     env_logger::init();
 
@@ -93,9 +102,7 @@ fn main() {
 
     info!("Listening on 127.0.0.1:8080");
 
-    let state = warp::any().map(move || Context {
-        db: database::Database::open("./test.db".to_string()),
-    });
+    let state = warp::any().map(move || Context { db: db.clone() });
     let graphql_filter = juniper_warp::make_graphql_filter(schema(), state.boxed());
 
     warp::serve(
