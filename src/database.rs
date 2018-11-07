@@ -1,6 +1,8 @@
 use bincode::{deserialize, serialize};
-use rocksdb::{Direction, Error, IteratorMode, DB};
-use series::{NewPoint, NewSeries, Point, QueryOptions, Series};
+use entities::point::{NewPoint, Point, QueryOptions};
+use entities::series::{NewSeries, Series};
+use rocksdb::{Direction, Error, IteratorMode, WriteBatch, DB};
+use std::path::Path;
 use std::str;
 
 pub struct Database {
@@ -8,7 +10,7 @@ pub struct Database {
 }
 
 impl Database {
-  pub fn open(path: String) -> Database {
+  pub fn open<P: AsRef<Path>>(path: P) -> Database {
     Database {
       db: DB::open_default(path).unwrap(),
     }
@@ -28,7 +30,7 @@ impl Database {
     self.iter_prefix("series::".to_string())
   }
 
-  fn iter_points(
+  pub fn iter_points(
     &self,
     series_name: &str,
     options: Option<QueryOptions>,
@@ -66,9 +68,7 @@ impl Database {
   }
 
   pub fn create_series(&self, new_series: NewSeries) -> Result<Series, Error> {
-    let series = Series {
-      name: new_series.name,
-    };
+    let series = Series::from(new_series);
     self.db.put(
       &format!("series::{}", &series.name).into_bytes(),
       &serialize(&series).unwrap(),
@@ -76,21 +76,23 @@ impl Database {
     Ok(series)
   }
 
-  pub fn delete_series(&self, series_name: String) -> Result<(), Error> {
-    self
-      .db
-      .delete(&format!("series::{}", series_name).into_bytes())?;
+  pub fn delete_series(&self, series_name: &str) -> Result<(), Error> {
+    let points = self.iter_points(series_name, None);
 
-    for (key, _) in self.iter_points(&series_name, None) {
-      self.db.delete(&key)?;
+    let mut batch = WriteBatch::default();
+
+    batch.delete(&format!("series::{}", series_name).into_bytes())?;
+
+    for (point, _) in points {
+      batch.delete(&point)?;
     }
 
-    Ok(())
+    self.db.write(batch)
   }
 
   pub fn query(
     &self,
-    series_name: String,
+    series_name: &str,
     options: Option<QueryOptions>,
   ) -> Result<Vec<Point>, Error> {
     let mut points = self
@@ -99,11 +101,11 @@ impl Database {
     let options = options.unwrap_or(Default::default());
 
     let points = match options
-      .aggregation
+      .aggregate
       .and_then(|a| points.next().map(|p| (a, p)))
     {
       Some((aggregation, first)) => {
-        let duration = aggregation.duration.clone().into();
+        let duration = (&aggregation.over).into();
         let mut count = 1;
         let mut start_time = first.time;
         let mut value = first.value;
@@ -139,7 +141,27 @@ impl Database {
     Ok(points)
   }
 
-  pub fn create_point(&self, series_name: String, new_point: NewPoint) -> Result<Point, Error> {
+  pub fn write(&mut self, batch: WriteBatch) -> Result<(), Error> {
+    self.db.write(batch)
+  }
+
+  pub fn delete_by_query(
+    &mut self,
+    series_name: &str,
+    options: Option<QueryOptions>,
+  ) -> Result<(), Error> {
+    let mut batch = WriteBatch::default();
+    let points = self.iter_points(series_name, options);
+
+    for (point, _) in points {
+      println!("Deleting {}", str::from_utf8(&point).unwrap());
+      batch.delete(&point)?;
+    }
+
+    self.db.write(batch)
+  }
+
+  pub fn create_point(&self, series_name: &str, new_point: NewPoint) -> Result<Point, Error> {
     let point = Point {
       time: new_point.time,
       value: new_point.value,

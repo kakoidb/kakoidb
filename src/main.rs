@@ -1,6 +1,7 @@
-extern crate env_logger;
+extern crate config;
+extern crate simplelog;
 #[macro_use]
-extern crate log as irrelevant_log;
+extern crate log;
 #[macro_use]
 extern crate juniper;
 extern crate juniper_warp;
@@ -8,109 +9,74 @@ extern crate rocksdb;
 extern crate warp;
 #[macro_use]
 extern crate serde_derive;
+extern crate atty;
 extern crate bincode;
 extern crate chrono;
-use std::sync::Arc;
+extern crate tokio;
+extern crate tokio_timer;
 
-use juniper::FieldResult;
-use warp::{http::Response, log, Filter};
-
+mod api;
 mod database;
-mod series;
-use database::Database;
-use series::{NewPoint, NewSeries, Point, QueryOptions, Series};
+mod entities;
+mod janitor;
 
-struct Context {
-    db: Arc<Database>,
+use api::{start_api, ApiConfig};
+use atty::Stream;
+use database::Database;
+use janitor::start_janitor;
+use janitor::JanitorConfig;
+use simplelog::{SimpleLogger, TermLogger};
+use std::path::Path;
+use std::str::FromStr;
+use std::sync::{Arc, RwLock};
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+struct StorageConfig {
+    path: String,
 }
 
-impl juniper::Context for Context {}
-
-// graphql_object!(Series: Context |&self| {
-
-//     field query(&executor, series_name: String) -> FieldResult<Vec<Point>> {
-//         let db = &executor.context().db;
-//         Ok(db.query(series_name)?)
-//     }
-// });
-
-struct Query;
-
-graphql_object!(Query: Context |&self| {
-
-    field apiVersion() -> &str {
-        "0.1"
-    }
-
-    field list_series(&executor) -> FieldResult<Vec<Series>> {
-        let db = &executor.context().db;
-        Ok(db.list_series()?)
-    }
-
-    field series(&executor, name: String) -> FieldResult<Option<Series>> {
-        let db = &executor.context().db;
-        Ok(db.get_series(name)?)
-    }
-
-    field query(&executor, series_name: String, options: Option<QueryOptions>) -> FieldResult<Vec<Point>> {
-        let db = &executor.context().db;
-        Ok(db.query(series_name, options)?)
-    }
-});
-
-struct Mutation;
-
-graphql_object!(Mutation: Context |&self| {
-
-    field create_series(&executor, new_series: NewSeries) -> FieldResult<Series> {
-        let db = &executor.context().db;
-        Ok(db.create_series(new_series)?)
-    }
-
-    field delete_series(&executor, series_name: String) -> FieldResult<Option<Series>> {
-        let db = &executor.context().db;
-        db.delete_series(series_name)?;
-        Ok(None)
-    }
-
-    field create_point(&executor, series_name: String, new_point: NewPoint) -> FieldResult<Point> {
-        let db = &executor.context().db;
-        Ok(db.create_point(series_name, new_point)?)
-    }
-});
-
-type Schema = juniper::RootNode<'static, Query, Mutation>;
-
-fn schema() -> Schema {
-    Schema::new(Query, Mutation)
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct Config {
+    server: Option<ApiConfig>,
+    storage: StorageConfig,
+    janitor: Option<JanitorConfig>,
+    log_level: Option<String>,
 }
 
 fn main() {
-    let db = Arc::new(database::Database::open("./test.db".to_string()));
-    ::std::env::set_var("RUST_LOG", "warp_server");
-    env_logger::init();
+    let mut settings: config::Config = config::Config::default();
+    settings
+        // Add in `./Settings.toml`
+        .merge(config::File::with_name("Settings"))
+        .unwrap()
+        // Add in settings from the environment (with a prefix of KAKOI)
+        // Eg.. `APP_DEBUG=1 ./target/app` would set the `debug` key
+        .merge(
+            config::Environment::with_prefix("KAKOI")
+                .separator("_")
+                .ignore_empty(true),
+        ).unwrap();
 
-    let log = log("warp_server");
-
-    let homepage = warp::path::end().map(|| {
-        Response::builder()
-            .header("content-type", "text/html")
-            .body(format!(
-                "<html><h1>juniper_warp</h1><div>visit <a href=\"/graphiql\">/graphiql</a></html>"
-            ))
+    let config = settings.try_into::<Config>().unwrap_or_else(|err| {
+        eprintln!("Invalid config: {}", err);
+        ::std::process::exit(1);
     });
 
-    info!("Listening on 127.0.0.1:8080");
+    let log_level = log::Level::from_str(&config.log_level.as_ref().unwrap_or(&"info".to_string()))
+        .unwrap()
+        .to_level_filter();
+    if atty::is(Stream::Stdout) {
+        TermLogger::init(log_level, simplelog::Config::default()).unwrap();
+    } else {
+        SimpleLogger::init(log_level, simplelog::Config::default()).unwrap();
+    }
 
-    let state = warp::any().map(move || Context { db: db.clone() });
-    let graphql_filter = juniper_warp::make_graphql_filter(schema(), state.boxed());
+    // Print out our settings
+    debug!("Config: {:?}", &config);
 
-    warp::serve(
-        warp::get2()
-            .and(warp::path("graphiql"))
-            .and(juniper_warp::graphiql_handler("/graphql"))
-            .or(homepage)
-            .or(warp::path("graphql").and(graphql_filter))
-            .with(log),
-    ).run(([127, 0, 0, 1], 8080));
+    let db_dir = Path::new(&config.storage.path).join("test.db");
+    let db = Arc::new(RwLock::new(Database::open(db_dir)));
+
+    start_janitor(&config.janitor, db.clone());
+    start_api(&config.server, db.clone());
 }
