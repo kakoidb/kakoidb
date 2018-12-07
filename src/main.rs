@@ -77,6 +77,9 @@ fn main() {
     let db_dir = Path::new(&config.storage.path).join("test.db");
     let db = Arc::new(RwLock::new(Database::open(db_dir)));
 
-    start_janitor(&config.janitor, db.clone());
+    start_janitor(&config.janitor, db.clone()).unwrap_or_else(|err| {
+        eprintln!("Invalid config [janitor]: {}", err);
+        ::std::process::exit(1);
+    });
     start_api(&config.server, db.clone());
 }

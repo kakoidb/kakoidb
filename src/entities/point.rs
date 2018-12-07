@@ -1,6 +1,10 @@
 use chrono::{DateTime, Utc};
 use entities::aggregation::NewAggregationStrategy;
 
+#[derive(Serialize, Deserialize, PartialEq, Debug)]
+pub struct StoragePoint {
+  pub value: f64,
+}
 #[derive(Serialize, Deserialize, PartialEq, Debug, GraphQLObject)]
 #[graphql(description = "Data at a specific time")]
 pub struct Point {
@@ -17,7 +21,7 @@ pub struct NewPoint {
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, GraphQLInputObject, Default)]
 pub struct QueryOptions {
-  pub from: Option<DateTime<Utc>>,
+  pub since: Option<DateTime<Utc>>,
   pub until: Option<DateTime<Utc>>,
   pub aggregate: Option<NewAggregationStrategy>,
 }

@@ -1,4 +1,5 @@
 use bincode::{deserialize, serialize};
+use entities::point::StoragePoint;
 use entities::point::{NewPoint, Point, QueryOptions};
 use entities::series::{NewSeries, Series};
 use rocksdb::{Direction, Error, IteratorMode, WriteBatch, DB};
@@ -30,25 +31,61 @@ impl Database {
     self.iter_prefix("series::".to_string())
   }
 
-  pub fn iter_points(
+  fn iter_points_serialized(
     &self,
     series_name: &str,
     options: Option<QueryOptions>,
   ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
     let options = options.unwrap_or(Default::default());
-    let start_key = match options.from {
-      Some(from) => format!("points::{}::{}", series_name, from),
+    let start_key = match options.since {
+      Some(since) => format!("points::{}::{}", series_name, since.to_rfc3339()),
       None => format!("points::{}", series_name),
     }.into_bytes();
     let end_key = match options.until {
-      Some(until) => format!("points::{}::{}", series_name, until),
+      Some(until) => format!("points::{}::{}", series_name, until.to_rfc3339()),
       None => format!("points:;{}", series_name),
-    };
+    }.into_bytes();
 
     self
       .db
       .iterator(IteratorMode::From(&start_key, Direction::Forward))
-      .take_while(move |(key, _)| str::from_utf8(key).unwrap().to_string() <= end_key)
+      .take_while(move |(key, _)| &**key <= end_key.as_slice())
+  }
+
+  pub fn iter_points(
+    &self,
+    series_name: &str,
+    options: Option<QueryOptions>,
+  ) -> impl Iterator<Item = Point> {
+    let prefix_length = format!("points::{}::", series_name).len();
+    self
+      .iter_points_serialized(&series_name, options.clone())
+      .filter_map(move |(key, value)| {
+        let key = String::from_utf8_lossy(&key[prefix_length..]);
+
+        Some(Point {
+          time: match key.parse() {
+            Ok(time) => time,
+            Err(_) => {
+              warn!(
+                "Could not parse key \"{}\" as date. It is excluded from the result",
+                key
+              );
+              return None;
+            }
+          },
+          value: match deserialize::<StoragePoint>(&value) {
+            Ok(point) => point.value,
+            Err(_) => {
+              warn!(
+                "Could not parse value of key \"{}\" as a StoragePoint. It is excluded from the result",
+                key
+              );
+              return None;
+            }
+          },
+        })
+      })
   }
 
   pub fn list_series(&self) -> Result<Vec<Series>, Error> {
@@ -77,7 +114,7 @@ impl Database {
   }
 
   pub fn delete_series(&self, series_name: &str) -> Result<(), Error> {
-    let points = self.iter_points(series_name, None);
+    let points = self.iter_points_serialized(series_name, None);
 
     let mut batch = WriteBatch::default();
 
@@ -95,9 +132,7 @@ impl Database {
     series_name: &str,
     options: Option<QueryOptions>,
   ) -> Result<Vec<Point>, Error> {
-    let mut points = self
-      .iter_points(&series_name, options.clone())
-      .map(|(_, value)| deserialize::<Point>(&value).unwrap());
+    let mut points = self.iter_points(&series_name, options.clone());
     let options = options.unwrap_or(Default::default());
 
     let points = match options
@@ -151,7 +186,7 @@ impl Database {
     options: Option<QueryOptions>,
   ) -> Result<(), Error> {
     let mut batch = WriteBatch::default();
-    let points = self.iter_points(series_name, options);
+    let points = self.iter_points_serialized(series_name, options);
 
     for (point, _) in points {
       println!("Deleting {}", str::from_utf8(&point).unwrap());
@@ -162,14 +197,16 @@ impl Database {
   }
 
   pub fn create_point(&self, series_name: &str, new_point: NewPoint) -> Result<Point, Error> {
-    let point = Point {
-      time: new_point.time,
+    let point = StoragePoint {
       value: new_point.value,
     };
     self.db.put(
-      &format!("points::{}::{}", &series_name, &point.time).into_bytes(),
+      &format!("points::{}::{}", &series_name, &new_point.time.to_rfc3339()).into_bytes(),
       &serialize(&point).unwrap(),
     )?;
-    Ok(point)
+    Ok(Point {
+      time: new_point.time,
+      value: new_point.value,
+    })
   }
 }

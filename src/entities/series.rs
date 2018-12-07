@@ -1,6 +1,8 @@
 use entities::aggregation::{AggregationStrategy, NewAggregationStrategy};
 use entities::duration::Duration;
 
+pub const CURRENT_STORAGE_VERSION: i32 = 0;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, GraphQLObject)]
 pub struct CompactionStrategy {
   pub after: Duration,
@@ -51,6 +53,8 @@ impl From<NewRetentionPolicy> for RetentionPolicy {
 pub struct Series {
   pub name: String,
   pub retention_policy: Option<RetentionPolicy>,
+  #[graphql(skip)]
+  pub storage_version: i32,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, GraphQLInputObject)]
@@ -65,6 +69,7 @@ impl From<NewSeries> for Series {
     Series {
       name: series.name,
       retention_policy: series.retention_policy.map(RetentionPolicy::from),
+      storage_version: CURRENT_STORAGE_VERSION,
     }
   }
 }

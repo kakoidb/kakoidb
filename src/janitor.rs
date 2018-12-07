@@ -1,9 +1,8 @@
-use bincode::{deserialize, serialize};
+use bincode::serialize;
 use chrono::prelude::*;
 use chrono::Duration;
 use database::Database;
 use entities::aggregation::NewAggregationStrategy;
-use entities::duration::TimeUnit;
 use entities::point::{Point, QueryOptions};
 use entities::series::RetentionPolicy;
 use rocksdb::WriteBatch;
@@ -16,25 +15,27 @@ use tokio::timer::Interval;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct JanitorConfig {
-  interval: ::entities::duration::Duration,
+  interval: String,
 }
 
 impl Default for JanitorConfig {
   fn default() -> JanitorConfig {
     JanitorConfig {
-      interval: ::entities::duration::Duration {
-        time_unit: TimeUnit::Minutes,
-        value: 5,
-      },
+      interval: "5 minutes".to_string(),
     }
   }
 }
 
-pub fn start_janitor(config: &Option<JanitorConfig>, db: Arc<RwLock<Database>>) {
+pub fn start_janitor(
+  config: &Option<JanitorConfig>,
+  db: Arc<RwLock<Database>>,
+) -> Result<(), &str> {
   let config = config.as_ref().map_or_else(Default::default, Clone::clone);
+  let interval = ::entities::duration::Duration::from_string(&config.interval)
+    .ok_or("Invalid duration for interval")?;
 
   thread::spawn(move || {
-    let duration = Duration::from(&config.interval).to_std().unwrap();
+    let duration = Duration::from(&interval).to_std().unwrap();
     let interval = Interval::new(Instant::now() + duration, duration);
 
     let task = interval
@@ -59,6 +60,8 @@ pub fn start_janitor(config: &Option<JanitorConfig>, db: Arc<RwLock<Database>>) 
 
     tokio::run(task);
   });
+
+  Ok(())
 }
 
 fn garbage_collect_series(
@@ -86,73 +89,71 @@ fn compact_series(
   series_name: &str,
   policy: RetentionPolicy,
 ) -> Result<(), rocksdb::Error> {
-  policy.compact.into_iter().try_fold(None, |from, compact| {
-    let until = Some(Utc::now() - &compact.after);
-    let mut db = db.write().unwrap();
-    let aggregation_strategy = NewAggregationStrategy {
-      over: compact.aggregate.over,
-      function: compact.aggregate.function,
-    };
-    let query_options = QueryOptions {
-      from: from,
-      until: until,
-      aggregate: Some(aggregation_strategy.clone()),
-    };
+  policy
+    .compact
+    .into_iter()
+    .try_fold(None, |since, compact| {
+      let until = Some(Utc::now() - &compact.after);
+      debug!("range {:?} -> {:?}", &since, &until);
+      let mut db = db.write().unwrap();
+      let aggregation_strategy = NewAggregationStrategy {
+        over: compact.aggregate.over,
+        function: compact.aggregate.function,
+      };
+      let query_options = QueryOptions {
+        since: since,
+        until: until,
+        aggregate: Some(aggregation_strategy.clone()),
+      };
 
-    let mut points = db
-      .iter_points(&series_name, Some(query_options))
-      .map(|(key, value)| (key, deserialize::<Point>(&value).unwrap()));
+      let mut points = db.iter_points(&series_name, Some(query_options));
 
-    match points.next() {
-      Some((first_key, first)) => {
-        let duration = (&aggregation_strategy.over).into();
-        let mut batch = WriteBatch::default();
-        let mut count = 1;
-        let mut start_key = first_key;
-        let mut start_time = first.time;
-        let mut value = first.value;
+      match points.next() {
+        Some(first) => {
+          let duration = (&aggregation_strategy.over).into();
+          let mut batch = WriteBatch::default();
+          let mut count = 1;
+          let mut start_time = first.time;
+          let mut value = first.value;
 
-        for (key, point) in points {
-          if point.time - start_time >= duration {
-            let aggregated_point = Point {
+          for point in points {
+            if point.time - start_time >= duration {
+              let aggregated_point = Point {
+                time: start_time,
+                value: aggregation_strategy.function.finish(value, count),
+              };
+
+              count = 1;
+              start_time = point.time;
+              value = point.value;
+
+              debug!("creating aggregation {}", &start_time);
+              batch.put(
+                &format!("points::{}::{}", &series_name, &start_time).into_bytes(),
+                &serialize(&aggregated_point).unwrap(),
+              )?;
+            } else {
+              count += 1;
+              value = aggregation_strategy.function.reduce(value, point.value);
+              debug!("compacting {}", &point.time);
+              batch.delete(&format!("points::{}::{}", &series_name, &point.time).into_bytes())?;
+            }
+          }
+
+          debug!("creating aggregation2 {}", &start_time);
+          batch.put(
+            &format!("points::{}::{}", &series_name, &start_time).into_bytes(),
+            &serialize(&Point {
               time: start_time,
               value: aggregation_strategy.function.finish(value, count),
-            };
+            }).unwrap(),
+          )?;
 
-            count = 1;
-            start_time = point.time;
-            value = point.value;
-
-            trace!(
-              "creating aggregation {}",
-              str::from_utf8(&start_key).unwrap()
-            );
-            batch.put(&start_key, &serialize(&aggregated_point).unwrap())?;
-          } else {
-            count += 1;
-            value = aggregation_strategy.function.reduce(value, point.value);
-            trace!("compacting {}", str::from_utf8(&key).unwrap());
-            batch.delete(&key)?;
-          }
+          db.write(batch)
         }
-
-        trace!(
-          "creating aggregation {}",
-          str::from_utf8(&start_key).unwrap()
-        );
-        batch.put(
-          &start_key,
-          &serialize(&Point {
-            time: start_time,
-            value: aggregation_strategy.function.finish(value, count),
-          }).unwrap(),
-        )?;
-
-        db.write(batch)
-      }
-      None => Ok(()),
-    }.map(|_| until)
-  })?;
+        None => Ok(()),
+      }.map(|_| until)
+    })?;
 
   Ok(())
 }

@@ -43,6 +43,25 @@ pub struct Duration {
   pub value: i32,
 }
 
+impl Duration {
+  pub fn from_string(s: &str) -> Option<Duration> {
+    let parts = s.split(" ").collect::<Vec<&str>>();
+    if parts.len() != 2 {
+      return None;
+    }
+    let value = parts[0].parse::<i32>();
+    let unit = TimeUnit::from(parts[1]);
+
+    match (value, unit) {
+      (Ok(value), Some(unit)) => Some(Duration {
+        value: value,
+        time_unit: unit,
+      }),
+      _ => None,
+    }
+  }
+}
+
 impl<'a> From<&'a Duration> for chrono::Duration {
   fn from(duration: &Duration) -> Self {
     match duration.time_unit {
@@ -83,21 +102,6 @@ graphql_scalar!(Duration {
     }
 
     from_input_value(v: &InputValue) -> Option<Duration> {
-      v.as_string_value().and_then(|v| {
-        let parts = v.split(" ").collect::<Vec<&str>>();
-        if parts.len() != 2 { return None }
-        let value = parts[0].parse::<i32>();
-        let unit = TimeUnit::from(parts[1]);
-
-        match (value, unit) {
-          (Ok(value), Some(unit)) => {
-            Some(Duration {
-              value: value,
-              time_unit: unit
-            })
-          },
-          _ => None
-        }
-      })
+      v.as_string_value().and_then(Duration::from_string)
     }
 });
