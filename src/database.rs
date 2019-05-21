@@ -66,20 +66,28 @@ impl Database {
         Some(Point {
           time: match key.parse() {
             Ok(time) => time,
-            Err(_) => {
+            Err(err) => {
               warn!(
                 "Could not parse key \"{}\" as date. It is excluded from the result",
                 key
+              );
+              debug!(
+                "Parse error: {:?}",
+                err
               );
               return None;
             }
           },
           value: match deserialize::<StoragePoint>(&value) {
             Ok(point) => point.value,
-            Err(_) => {
+            Err(err) => {
               warn!(
                 "Could not parse value of key \"{}\" as a StoragePoint. It is excluded from the result",
                 key
+              );
+              debug!(
+                "Parse error: {:?}",
+                err
               );
               return None;
             }

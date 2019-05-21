@@ -65,10 +65,12 @@ fn main() {
     let log_level = log::Level::from_str(&config.log_level.as_ref().unwrap_or(&"info".to_string()))
         .unwrap()
         .to_level_filter();
+    let mut log_config = simplelog::Config::default();
+    log_config.time_format = Some("%+");
     if atty::is(Stream::Stdout) {
-        TermLogger::init(log_level, simplelog::Config::default()).unwrap();
+        TermLogger::init(log_level, log_config).unwrap();
     } else {
-        SimpleLogger::init(log_level, simplelog::Config::default()).unwrap();
+        SimpleLogger::init(log_level, log_config).unwrap();
     }
 
     // Print out our settings
