@@ -7,7 +7,7 @@ use entities::point::{Point, QueryOptions};
 use entities::series::RetentionPolicy;
 use rocksdb::WriteBatch;
 use std::str;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockWriteGuard};
 use std::thread;
 use std::time::Instant;
 use tokio::prelude::*;
@@ -42,7 +42,8 @@ pub fn start_janitor(
       .for_each(move |_| {
         info!("Running janitor");
 
-        let series = { db.read().unwrap().list_series().unwrap() };
+        let mut db_mut = db.write().unwrap();
+        let series = db_mut.list_series().unwrap();
 
         let series = series.into_iter().filter_map(|series| {
           let name = series.name;
@@ -51,8 +52,8 @@ pub fn start_janitor(
 
         series.for_each(|(series_name, policy)| {
           debug!("Running janitor on series {}", series_name);
-          garbage_collect_series(&db, &series_name, &policy).unwrap();
-          compact_series(&db, &series_name, policy).unwrap();
+          garbage_collect_series(&mut db_mut, &series_name, &policy).unwrap();
+          compact_series(&mut db_mut, &series_name, policy).unwrap();
         });
 
         future::done(Ok(()))
@@ -65,7 +66,7 @@ pub fn start_janitor(
 }
 
 fn garbage_collect_series(
-  db: &Arc<RwLock<Database>>,
+  db: &mut RwLockWriteGuard<Database>,
   series_name: &str,
   policy: &RetentionPolicy,
 ) -> Result<(), rocksdb::Error> {
@@ -73,7 +74,7 @@ fn garbage_collect_series(
     Some(drop_after) => {
       let drop_until = Utc::now() - drop_after;
       trace!("Drop until {}", drop_until);
-      db.write().unwrap().delete_by_query(
+      db.delete_by_query(
         &series_name,
         Some(QueryOptions::with(|options| {
           options.until = Some(drop_until);
@@ -85,7 +86,7 @@ fn garbage_collect_series(
 }
 
 fn compact_series(
-  db: &Arc<RwLock<Database>>,
+  db: &mut RwLockWriteGuard<Database>,
   series_name: &str,
   policy: RetentionPolicy,
 ) -> Result<(), rocksdb::Error> {
@@ -95,7 +96,6 @@ fn compact_series(
     .try_fold(None, |since, compact| {
       let until = Some(Utc::now() - &compact.after);
       debug!("range {:?} -> {:?}", &since, &until);
-      let mut db = db.write().unwrap();
       let aggregation_strategy = NewAggregationStrategy {
         over: compact.aggregate.over,
         function: compact.aggregate.function,
@@ -149,7 +149,8 @@ fn compact_series(
             }).unwrap(),
           )?;
 
-          db.write(batch)
+          db.write(batch)?;
+          Ok(())
         }
         None => Ok(()),
       }.map(|_| until)
