@@ -17,7 +17,7 @@ impl Database {
     }
   }
 
-  fn iter_prefix(&self, key_prefix: String) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
+  fn iter_prefix(&self, key_prefix: String) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
     let key_prefix_bytes = key_prefix.into_bytes();
     let prefix_length = key_prefix_bytes.len();
 
@@ -27,7 +27,7 @@ impl Database {
       .take_while(move |(key, _)| &key[..prefix_length] == key_prefix_bytes.as_slice())
   }
 
-  fn iter_series(&self) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
+  fn iter_series(&self) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
     self.iter_prefix("series::".to_string())
   }
 
@@ -35,16 +35,18 @@ impl Database {
     &self,
     series_name: &str,
     options: Option<QueryOptions>,
-  ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
+  ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
     let options = options.unwrap_or(Default::default());
     let start_key = match options.since {
       Some(since) => format!("points::{}::{}", series_name, since.to_rfc3339()),
       None => format!("points::{}", series_name),
-    }.into_bytes();
+    }
+    .into_bytes();
     let end_key = match options.until {
       Some(until) => format!("points::{}::{}", series_name, until.to_rfc3339()),
       None => format!("points:;{}", series_name),
-    }.into_bytes();
+    }
+    .into_bytes();
 
     self
       .db
@@ -56,7 +58,7 @@ impl Database {
     &self,
     series_name: &str,
     options: Option<QueryOptions>,
-  ) -> impl Iterator<Item = Point> {
+  ) -> impl Iterator<Item = Point> + '_ {
     let prefix_length = format!("points::{}::", series_name).len();
     self
       .iter_points_serialized(&series_name, options.clone())
@@ -169,7 +171,8 @@ impl Database {
               value = aggregation.function.reduce(value, point.value);
               None
             }
-          }).collect();
+          })
+          .collect();
 
         points.push(Point {
           time: start_time,

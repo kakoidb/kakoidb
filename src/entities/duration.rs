@@ -1,5 +1,8 @@
 use chrono::prelude::*;
-use juniper::Value;
+use juniper::{
+  parser::{ParseError, ScalarToken, Token},
+  ParseScalarResult, Value,
+};
 use std::fmt;
 use std::ops::{Add, Sub};
 
@@ -94,14 +97,23 @@ impl<'a> Sub<&'a Duration> for DateTime<Utc> {
   }
 }
 
-graphql_scalar!(Duration {
+graphql_scalar!(Duration as "Duration" where Scalar = <S> {
     description: "duration of time"
 
     resolve(&self) -> Value {
-      Value::String(format!("{} {}", self.value, self.time_unit))
+      Value::scalar(format!("{} {}", self.value, self.time_unit))
     }
 
     from_input_value(v: &InputValue) -> Option<Duration> {
-      v.as_string_value().and_then(Duration::from_string)
+      v.as_scalar_value::<String>()
+        .and_then(|s| Duration::from_string(s))
+    }
+
+    from_str<'a>(value: ScalarToken<'a>) -> ParseScalarResult<'a, S> {
+      if let ScalarToken::String(value) =  value {
+        Ok(S::from(value.to_owned()))
+      } else {
+        Err(ParseError::UnexpectedToken(Token::Scalar(value)))
+      }
     }
 });

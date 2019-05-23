@@ -1,7 +1,7 @@
 #####################
 # Build environment #
 #####################
-FROM rust:1-slim AS builder
+FROM rust:1.34.2-slim AS builder
 
 RUN apt update && apt install -y libclang-dev clang
 

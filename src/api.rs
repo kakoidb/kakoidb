@@ -103,9 +103,10 @@ pub fn start_api(config: &Option<ApiConfig>, db: Arc<RwLock<Database>>) {
     warp::serve(
         warp::get2()
             .and(warp::path("graphiql"))
-            .and(juniper_warp::graphiql_handler("/graphql"))
+            .and(juniper_warp::graphiql_filter("/graphql"))
             .or(homepage)
             .or(warp::path("graphql").and(graphql_filter))
             .with(log),
-    ).run((host, port));
+    )
+    .run((host, port));
 }
