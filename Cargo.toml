@@ -19,3 +19,6 @@ tokio-timer = "0.2"
 config = "0.9"
 simplelog = "0.5"
 atty = "0.2"
+
+[dev-dependencies]
+tempdir = "0.3.7"

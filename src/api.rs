@@ -41,7 +41,7 @@ graphql_object!(Query: Context |&self| {
 
     field series(&executor, name: String) -> FieldResult<Option<Series>> {
         let db = &executor.context().db;
-        Ok(db.read().unwrap().get_series(name)?)
+        Ok(db.read().unwrap().get_series(&name)?)
     }
 
     field query(&executor, series_name: String, options: Option<QueryOptions>) -> FieldResult<Vec<Point>> {

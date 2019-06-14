@@ -2,9 +2,25 @@ use crate::entities::point::StoragePoint;
 use crate::entities::point::{NewPoint, Point, QueryOptions};
 use crate::entities::series::{NewSeries, Series};
 use bincode::{deserialize, serialize};
-use rocksdb::{Direction, Error, IteratorMode, WriteBatch, DB};
+use rocksdb::{Direction, IteratorMode, WriteBatch, DB};
+use std::fmt;
 use std::path::Path;
 use std::str;
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum Error {
+  SeriesMissing(String),
+  Inner(rocksdb::Error),
+}
+
+impl fmt::Display for Error {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    match self {
+      Error::Inner(error) => error.fmt(f),
+      Error::SeriesMissing(series_name) => write!(f, "Series \"{}\" do not exist", series_name),
+    }
+  }
+}
 
 pub struct Database {
   db: DB,
@@ -107,14 +123,14 @@ impl Database {
     )
   }
 
-  pub fn get_series(&self, name: String) -> Result<Option<Series>, Error> {
+  pub fn get_series(&self, name: &str) -> Result<Option<Series>, rocksdb::Error> {
     match self.db.get(&format!("series::{}", name).into_bytes())? {
       Some(series) => Ok(Some(deserialize(&series).unwrap())),
       None => Ok(None),
     }
   }
 
-  pub fn create_series(&self, new_series: NewSeries) -> Result<Series, Error> {
+  pub fn create_series(&self, new_series: NewSeries) -> Result<Series, rocksdb::Error> {
     let series = Series::from(new_series);
     self.db.put(
       &format!("series::{}", &series.name).into_bytes(),
@@ -123,7 +139,7 @@ impl Database {
     Ok(series)
   }
 
-  pub fn delete_series(&self, series_name: &str) -> Result<(), Error> {
+  pub fn delete_series(&self, series_name: &str) -> Result<(), rocksdb::Error> {
     let points = self.iter_points_serialized(series_name, None);
 
     let mut batch = WriteBatch::default();
@@ -187,7 +203,7 @@ impl Database {
     Ok(points)
   }
 
-  pub fn write(&mut self, batch: WriteBatch) -> Result<(), Error> {
+  pub fn write(&mut self, batch: WriteBatch) -> Result<(), rocksdb::Error> {
     self.db.write(batch)
   }
 
@@ -195,7 +211,7 @@ impl Database {
     &mut self,
     series_name: &str,
     options: Option<QueryOptions>,
-  ) -> Result<(), Error> {
+  ) -> Result<(), rocksdb::Error> {
     let mut batch = WriteBatch::default();
     let points = self.iter_points_serialized(series_name, options);
 
@@ -208,16 +224,139 @@ impl Database {
   }
 
   pub fn create_point(&self, series_name: &str, new_point: NewPoint) -> Result<Point, Error> {
+    if self
+      .db
+      .get(&format!("series::{}", series_name).into_bytes())
+      .map_err(Error::Inner)?
+      .is_none()
+    {
+      return Err(Error::SeriesMissing(series_name.to_string()));
+    }
+
     let point = StoragePoint {
       value: new_point.value,
     };
-    self.db.put(
-      &format!("points::{}::{}", &series_name, &new_point.time.to_rfc3339()).into_bytes(),
-      &serialize(&point).unwrap(),
-    )?;
+    self
+      .db
+      .put(
+        &format!("points::{}::{}", &series_name, &new_point.time.to_rfc3339()).into_bytes(),
+        &serialize(&point).unwrap(),
+      )
+      .map_err(Error::Inner)?;
     Ok(Point {
       time: new_point.time,
       value: new_point.value,
     })
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+  use crate::entities::point::{NewPoint, Point};
+  use crate::entities::series::{NewSeries, Series};
+  use chrono::Utc;
+  use tempdir::TempDir;
+
+  fn db_test<T>(test: T) -> ()
+  where
+    T: FnOnce(&Database) -> (),
+  {
+    let tmp_dir = TempDir::new("kakoi_db_test").unwrap();
+    let db_path = tmp_dir.path().join("db");
+    let db = Database::open(db_path);
+
+    test(&db);
+
+    tmp_dir.close().unwrap();
+  }
+
+  #[test]
+  fn test_create_series_basic() {
+    db_test(|db| {
+      let created_series = db.create_series(NewSeries {
+        name: "test-series".to_string(),
+        retention_policy: None,
+      });
+
+      assert_eq!(
+        created_series,
+        Ok(Series::from(NewSeries {
+          name: "test-series".to_string(),
+          retention_policy: None,
+        }))
+      );
+
+      let all_series = db.list_series();
+
+      assert_eq!(
+        all_series,
+        Ok(vec![Series::from(NewSeries {
+          name: "test-series".to_string(),
+          retention_policy: None,
+        })])
+      );
+    });
+  }
+
+  #[test]
+  fn test_create_point_basic() {
+    db_test(|db| {
+      db.create_series(NewSeries {
+        name: "test-series".to_string(),
+        retention_policy: None,
+      })
+      .unwrap();
+
+      let now = Utc::now();
+      let created_point = db.create_point(
+        "test-series",
+        NewPoint {
+          time: now,
+          value: 1.0,
+        },
+      );
+
+      assert_eq!(
+        created_point,
+        Ok(Point {
+          time: now,
+          value: 1.0
+        })
+      );
+
+      let all_points = db.query("test-series", None);
+
+      assert_eq!(
+        all_points,
+        Ok(vec![Point {
+          time: now,
+          value: 1.0
+        }])
+      );
+    });
+  }
+
+  #[test]
+  fn test_create_point_no_series() {
+    db_test(|db| {
+      let now = Utc::now();
+      let created_point = db.create_point(
+        "test-series",
+        NewPoint {
+          time: now,
+          value: 1.0,
+        },
+      );
+
+      assert_eq!(
+        created_point,
+        Err(Error::SeriesMissing("test-series".to_string()))
+      );
+
+      let all_points = db.query("test-series", None);
+
+      assert_eq!(all_points, Ok(vec![]));
+    });
   }
 }
