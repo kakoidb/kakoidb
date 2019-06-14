@@ -1,4 +1,4 @@
-use entities::duration::Duration;
+use crate::entities::duration::Duration;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, GraphQLEnum)]
 pub enum AggregationFunction {

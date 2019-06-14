@@ -1,7 +1,7 @@
+use crate::entities::point::StoragePoint;
+use crate::entities::point::{NewPoint, Point, QueryOptions};
+use crate::entities::series::{NewSeries, Series};
 use bincode::{deserialize, serialize};
-use entities::point::StoragePoint;
-use entities::point::{NewPoint, Point, QueryOptions};
-use entities::series::{NewSeries, Series};
 use rocksdb::{Direction, Error, IteratorMode, WriteBatch, DB};
 use std::path::Path;
 use std::str;

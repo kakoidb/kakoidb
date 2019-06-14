@@ -1,6 +1,6 @@
-use database::Database;
-use entities::point::{NewPoint, Point, QueryOptions};
-use entities::series::{NewSeries, Series};
+use crate::database::Database;
+use crate::entities::point::{NewPoint, Point, QueryOptions};
+use crate::entities::series::{NewSeries, Series};
 use juniper::FieldResult;
 use std::net::IpAddr;
 use std::sync::{Arc, RwLock};

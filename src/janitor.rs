@@ -1,10 +1,10 @@
+use crate::database::Database;
+use crate::entities::aggregation::NewAggregationStrategy;
+use crate::entities::point::{Point, QueryOptions};
+use crate::entities::series::RetentionPolicy;
 use bincode::serialize;
 use chrono::prelude::*;
 use chrono::Duration;
-use database::Database;
-use entities::aggregation::NewAggregationStrategy;
-use entities::point::{Point, QueryOptions};
-use entities::series::RetentionPolicy;
 use rocksdb::WriteBatch;
 use std::str;
 use std::sync::{Arc, RwLock, RwLockWriteGuard};
@@ -31,7 +31,7 @@ pub fn start_janitor(
   db: Arc<RwLock<Database>>,
 ) -> Result<(), &str> {
   let config = config.as_ref().map_or_else(Default::default, Clone::clone);
-  let interval = ::entities::duration::Duration::from_string(&config.interval)
+  let interval = crate::entities::duration::Duration::from_string(&config.interval)
     .ok_or("Invalid duration for interval")?;
 
   thread::spawn(move || {

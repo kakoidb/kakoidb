@@ -2,6 +2,7 @@
 name = "kakoidb"
 version = "0.1.0"
 authors = ["Rasmus Eneman <rasmus.eneman@learningwell.se>"]
+edition = "2018"
 
 [dependencies]
 rocksdb = "0.12.2"

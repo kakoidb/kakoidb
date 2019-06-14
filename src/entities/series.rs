@@ -1,5 +1,5 @@
-use entities::aggregation::{AggregationStrategy, NewAggregationStrategy};
-use entities::duration::Duration;
+use crate::entities::aggregation::{AggregationStrategy, NewAggregationStrategy};
+use crate::entities::duration::Duration;
 
 pub const CURRENT_STORAGE_VERSION: i32 = 0;
 

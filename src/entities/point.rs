@@ -1,5 +1,5 @@
+use crate::entities::aggregation::NewAggregationStrategy;
 use chrono::{DateTime, Utc};
-use entities::aggregation::NewAggregationStrategy;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug)]
 pub struct StoragePoint {
