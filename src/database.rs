@@ -52,7 +52,7 @@ impl Database {
     series_name: &str,
     options: Option<QueryOptions>,
   ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> + '_ {
-    let options = options.unwrap_or(Default::default());
+    let options = options.unwrap_or_default();
     let start_key = match options.since {
       Some(since) => format!("points::{}::{}", series_name, since.to_rfc3339()),
       None => format!("points::{}", series_name),
@@ -67,7 +67,7 @@ impl Database {
     self
       .db
       .iterator(IteratorMode::From(&start_key, Direction::Forward))
-      .take_while(move |(key, _)| &**key <= end_key.as_slice())
+      .take_while(move |(key, _)| **key <= *end_key.as_slice())
   }
 
   pub fn iter_points(
@@ -159,7 +159,7 @@ impl Database {
     options: Option<QueryOptions>,
   ) -> Result<Vec<Point>, Error> {
     let mut points = self.iter_points(&series_name, options.clone());
-    let options = options.unwrap_or(Default::default());
+    let options = options.unwrap_or_default();
 
     let points = match options
       .aggregate
@@ -258,7 +258,7 @@ mod tests {
   use chrono::Utc;
   use tempdir::TempDir;
 
-  fn db_test<T>(test: T) -> ()
+  fn db_test<T>(test: T)
   where
     T: FnOnce(&Database) -> (),
   {

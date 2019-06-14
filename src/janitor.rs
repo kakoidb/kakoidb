@@ -102,8 +102,8 @@ fn compact_series(
         function: compact.aggregate.function,
       };
       let query_options = QueryOptions {
-        since: since,
-        until: until,
+        since,
+        until,
         aggregate: Some(aggregation_strategy.clone()),
       };
 
@@ -111,49 +111,46 @@ fn compact_series(
       {
         let mut points = db.iter_points(&series_name, Some(query_options));
 
-        match points.next() {
-          Some(first) => {
-            let duration = (&aggregation_strategy.over).into();
-            let mut count = 1;
-            let mut start_time = first.time;
-            let mut value = first.value;
+        if let Some(first) = points.next() {
+          let duration = (&aggregation_strategy.over).into();
+          let mut count = 1;
+          let mut start_time = first.time;
+          let mut value = first.value;
 
-            for point in points {
-              if point.time - start_time >= duration {
-                let aggregated_point = Point {
-                  time: start_time,
-                  value: aggregation_strategy.function.finish(value, count),
-                };
-
-                count = 1;
-                start_time = point.time;
-                value = point.value;
-
-                debug!("creating aggregation {}", &start_time);
-                batch.put(
-                  &format!("points::{}::{}", &series_name, &start_time).into_bytes(),
-                  &serialize(&aggregated_point).unwrap(),
-                )?;
-              } else {
-                count += 1;
-                value = aggregation_strategy.function.reduce(value, point.value);
-                debug!("compacting {}", &point.time);
-                batch.delete(&format!("points::{}::{}", &series_name, &point.time).into_bytes())?;
-              }
-            }
-
-            debug!("creating aggregation2 {}", &start_time);
-            batch.put(
-              &format!("points::{}::{}", &series_name, &start_time).into_bytes(),
-              &serialize(&Point {
+          for point in points {
+            if point.time - start_time >= duration {
+              let aggregated_point = Point {
                 time: start_time,
                 value: aggregation_strategy.function.finish(value, count),
-              })
-              .unwrap(),
-            )?;
+              };
+
+              count = 1;
+              start_time = point.time;
+              value = point.value;
+
+              debug!("creating aggregation {}", &start_time);
+              batch.put(
+                &format!("points::{}::{}", &series_name, &start_time).into_bytes(),
+                &serialize(&aggregated_point).unwrap(),
+              )?;
+            } else {
+              count += 1;
+              value = aggregation_strategy.function.reduce(value, point.value);
+              debug!("compacting {}", &point.time);
+              batch.delete(&format!("points::{}::{}", &series_name, &point.time).into_bytes())?;
+            }
           }
-          None => {}
-        };
+
+          debug!("creating aggregation2 {}", &start_time);
+          batch.put(
+            &format!("points::{}::{}", &series_name, &start_time).into_bytes(),
+            &serialize(&Point {
+              time: start_time,
+              value: aggregation_strategy.function.finish(value, count),
+            })
+            .unwrap(),
+          )?;
+        }
       }
 
       db.write(batch)?;

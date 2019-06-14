@@ -48,7 +48,7 @@ pub struct Duration {
 
 impl Duration {
   pub fn from_string(s: &str) -> Option<Duration> {
-    let parts = s.split(" ").collect::<Vec<&str>>();
+    let parts = s.split(' ').collect::<Vec<&str>>();
     if parts.len() != 2 {
       return None;
     }
@@ -57,7 +57,7 @@ impl Duration {
 
     match (value, unit) {
       (Ok(value), Some(unit)) => Some(Duration {
-        value: value,
+        value,
         time_unit: unit,
       }),
       _ => None,
@@ -68,11 +68,11 @@ impl Duration {
 impl<'a> From<&'a Duration> for chrono::Duration {
   fn from(duration: &Duration) -> Self {
     match duration.time_unit {
-      TimeUnit::Minutes => chrono::Duration::minutes(duration.value as i64),
-      TimeUnit::Hours => chrono::Duration::hours(duration.value as i64),
-      TimeUnit::Days => chrono::Duration::days(duration.value as i64),
-      TimeUnit::Weeks => chrono::Duration::weeks(duration.value as i64),
-      TimeUnit::Years => chrono::Duration::days(365 * (duration.value as i64)),
+      TimeUnit::Minutes => chrono::Duration::minutes(i64::from(duration.value)),
+      TimeUnit::Hours => chrono::Duration::hours(i64::from(duration.value)),
+      TimeUnit::Days => chrono::Duration::days(i64::from(duration.value)),
+      TimeUnit::Weeks => chrono::Duration::weeks(i64::from(duration.value)),
+      TimeUnit::Years => chrono::Duration::days(i64::from(365 * duration.value)),
     }
   }
 }
