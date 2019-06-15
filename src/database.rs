@@ -55,12 +55,12 @@ impl Database {
     let options = options.unwrap_or_default();
     let start_key = match options.since {
       Some(since) => format!("points::{}::{}", series_name, since.to_rfc3339()),
-      None => format!("points::{}", series_name),
+      None => format!("points::{}::", series_name),
     }
     .into_bytes();
     let end_key = match options.until {
       Some(until) => format!("points::{}::{}", series_name, until.to_rfc3339()),
-      None => format!("points:;{}", series_name),
+      None => format!("points::{}:;", series_name),
     }
     .into_bytes();
 
@@ -253,6 +253,7 @@ impl Database {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::entities::duration::Duration;
   use crate::entities::point::{NewPoint, Point};
   use crate::entities::series::{NewSeries, Series};
   use chrono::Utc;
@@ -332,6 +333,61 @@ mod tests {
         Ok(vec![Point {
           time: now,
           value: 1.0
+        }])
+      );
+    });
+  }
+
+  #[test]
+  fn test_create_point_series() {
+    db_test(|db| {
+      db.create_series(NewSeries {
+        name: "test-series1".to_string(),
+        retention_policy: None,
+      })
+      .unwrap();
+      db.create_series(NewSeries {
+        name: "test-series2".to_string(),
+        retention_policy: None,
+      })
+      .unwrap();
+
+      let now = Utc::now();
+      db.create_point(
+        "test-series1",
+        NewPoint {
+          time: now,
+          value: 1.0,
+        },
+      )
+      .unwrap();
+      let five_minutes_ago = Utc::now() - &Duration::from_string("5 minutes").unwrap();
+      db.create_point(
+        "test-series2",
+        NewPoint {
+          time: five_minutes_ago,
+          value: 42.0,
+        },
+      )
+      .unwrap();
+
+      let test_series1 = db.query("test-series1", None);
+
+      assert_eq!(
+        test_series1,
+        Ok(vec![Point {
+          time: now,
+          value: 1.0
+        }])
+      );
+
+      let test_series2 = db.query("test-series2", None);
+
+      assert_eq!(
+        test_series2,
+        Ok(vec![Point {
+          time: five_minutes_ago,
+          value: 42.0
         }])
       );
     });
